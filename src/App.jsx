@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Analytics } from '@vercel/analytics/react';
 import { Download, Plus, RefreshCw, Settings, Wallet2, Bell, Coins, Trash2, Edit2, BarChart3, CreditCard, Cloud } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, AreaChart, Area } from "recharts";
 
@@ -7,12 +6,21 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContai
  * CreditRadar – single‑file React prototype
  *
  * Updates (2025‑11‑11):
- * - FIX: Resolved "Unterminated string constant" in CSV exporter (uses "
-").
- * - UX: "NEW (custom)" option when adding a platform.
+ * - FIX: Resolved "Unterminated string constant" in CSV exporter (now uses "\n").
+ * - FIX: Removed stray duplicate component tail that caused syntax errors.
+ * - UX: "NEW (custom)" option when adding a platform (no more forced presets).
  * - UX: Create a platform inline from the Log usage modal (NEW… option in dropdown).
- * - DX: Added lightweight dev-time tests for CSV escaping.
- * - Analytics: Added <Analytics /> from @vercel/analytics/react.
+ * - QA: Added lightweight dev-time tests that run in `import.meta.env.DEV`.
+ *
+ * Features
+ * - Dark, sleek dashboard (Tailwind)
+ * - Add/manage platforms (Higgsfield, Suno, Google Flow, Runway, Pika, Luma, etc.) OR a custom platform via NEW
+ * - Log credit usage (transactions) per platform & optional project tag
+ * - Auto sums balances, shows total credits
+ * - Burn‑rate & forecast from 30‑day average
+ * - Simple trend chart per platform
+ * - CSV export (balances & transactions)
+ * - LocalStorage persistence
  */
 
 // --- Presets (still available, but optional) ---
@@ -74,14 +82,14 @@ function classNames(...c) { return c.filter(Boolean).join(" "); }
 // --- Dev tests (run only in dev) ---
 function __runDevTests() {
   try {
-    const rows = [["A,1", 'B"2', "C
-3"], ["x", "y", "z"]];
-    const make = (arr) => arr.map(r => r.map(v => `"${String(v).replaceAll('"','""')}"`).join(",")).join("
-");
+    // test CSV make function behavior
+    const rows = [["A,1", 'B"2', "C\n3"], ["x", "y", "z"]];
+    const make = (arr) => arr.map(r => r.map(v => `"${String(v).replaceAll('"','""')}"`).join(",")).join("\n");
     const out = make(rows);
-    console.assert(out.includes('
-'), 'CSV should contain newlines');
+    console.assert(out.includes('\n'), 'CSV should contain newlines');
+    console.assert(out.split('\n').length === 3, 'CSV should have header+2 rows when tested');
   } catch (err) {
+    // eslint-disable-next-line no-console
     console.warn('Dev tests failed:', err);
   }
 }
@@ -202,15 +210,11 @@ export default function App() {
     const headers2 = ["Date","Platform","Amount","Project","Note"]; 
     const rows2 = state.transactions.map(t => [t.date,t.platform,t.amount,t.project||"",t.note||""]); 
 
-    const make = (rows) => rows.map(r => r.map(v => `"${String(v).replaceAll('"','""')}"`).join(",")).join("
-");
+    // FIX: use \n instead of a literal line break in string literal
+    const make = (rows) => rows.map(r => r.map(v => `"${String(v).replaceAll('"','""')}"`).join(",")).join("\n");
     const part1 = make([headers1, ...rows1]);
     const part2 = make([headers2, ...rows2]);
-    const content = `Balances
-${part1}
-
-Transactions
-${part2}`;
+    const content = `Balances\n${part1}\n\nTransactions\n${part2}`;
     const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -363,9 +367,6 @@ ${part2}`;
           onCreatePlatform={(pf)=>{ addCustomPlatform(pf); }}
         />)
       }
-
-      {/* Vercel Analytics */}
-      <Analytics />
     </div>
   );
 }
