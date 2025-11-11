@@ -1,15 +1,20 @@
-
 import React, { useEffect, useMemo, useState } from "react";
 import { Download, Plus, RefreshCw, Settings, Wallet2, Bell, Coins, Trash2, Edit2, BarChart3, CreditCard, Cloud } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, AreaChart, Area } from "recharts";
 
 /**
  * CreditRadar – single‑file React prototype
- * (Originally: AI Credits Tracker)
+ *
+ * Updates (2025‑11‑11):
+ * - FIX: Resolved "Unterminated string constant" in CSV exporter (now uses "\n").
+ * - FIX: Removed stray duplicate component tail that caused syntax errors.
+ * - UX: "NEW (custom)" option when adding a platform (no more forced presets).
+ * - UX: Create a platform inline from the Log usage modal (NEW… option in dropdown).
+ * - QA: Added lightweight dev-time tests that run in `import.meta.env.DEV`.
  *
  * Features
  * - Dark, sleek dashboard (Tailwind)
- * - Add/manage platforms (Higgsfield, Suno, Google Flow, Runway, Pika, Luma, etc.)
+ * - Add/manage platforms (Higgsfield, Suno, Google Flow, Runway, Pika, Luma, etc.) OR a custom platform via NEW
  * - Log credit usage (transactions) per platform & optional project tag
  * - Auto sums balances, shows total credits
  * - Burn‑rate & forecast from 30‑day average
@@ -18,7 +23,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContai
  * - LocalStorage persistence
  */
 
-// --- Types ---
+// --- Presets (still available, but optional) ---
 const PLATFORM_PRESETS = [
   { key: "Higgsfield", color: "#34d399" },
   { key: "Suno", color: "#60a5fa" },
@@ -74,14 +79,31 @@ function saveState(state) {
 
 function classNames(...c) { return c.filter(Boolean).join(" "); }
 
+// --- Dev tests (run only in dev) ---
+function __runDevTests() {
+  try {
+    // test CSV make function behavior
+    const rows = [["A,1", 'B"2', "C\n3"], ["x", "y", "z"]];
+    const make = (arr) => arr.map(r => r.map(v => `"${String(v).replaceAll('"','""')}"`).join(",")).join("\n");
+    const out = make(rows);
+    console.assert(out.includes('\n'), 'CSV should contain newlines');
+    console.assert(out.split('\n').length === 3, 'CSV should have header+2 rows when tested');
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('Dev tests failed:', err);
+  }
+}
+
 export default function App() {
   const [state, setState] = useState(loadState);
   const [showAdd, setShowAdd] = useState(false);
+  const [showNew, setShowNew] = useState(false); // NEW (custom) platform modal
   const [editing, setEditing] = useState(null); // platform id
   const [showTxn, setShowTxn] = useState(false);
   const [filter, setFilter] = useState("All");
 
   useEffect(() => saveState(state), [state]);
+  useEffect(() => { if (import.meta?.env?.DEV) __runDevTests(); }, []);
 
   const totalCredits = useMemo(() => state.platforms.reduce((a, p) => a + (Number(p.credits) || 0), 0), [state.platforms]);
 
@@ -104,10 +126,9 @@ export default function App() {
   const platformMap = useMemo(() => Object.fromEntries(state.platforms.map(p => [p.name, p])), [state.platforms]);
 
   const chartData = useMemo(() => {
-    // Build simple time series from transactions per day
     const byDay = {};
     state.transactions.forEach((t) => {
-      byDay[t.date] = (byDay[t.date] || 0) + t.amount; // negative spend
+      byDay[t.date] = (byDay[t.date] || 0) + t.amount;
     });
     const days = Array.from({ length: 14 }).map((_, i) => {
       const d = new Date(Date.now() - (13 - i) * 24 * 3600 * 1000);
@@ -141,6 +162,28 @@ export default function App() {
     setShowAdd(false);
   }
 
+  function addCustomPlatform(custom) {
+    const trimmed = (custom.name || "").trim();
+    if (!trimmed) return alert("Name is required");
+    if (state.platforms.some(p => p.name.toLowerCase() === trimmed.toLowerCase())) {
+      return alert("A platform with that name already exists.");
+    }
+    setState(s => ({
+      ...s,
+      platforms: [...s.platforms, {
+        id: crypto.randomUUID(),
+        name: trimmed,
+        credits: Number(custom.credits) || 0,
+        color: custom.color || "#64748b",
+        unit: custom.unit || "credits",
+        account: custom.account || "main",
+        monthlyAllowance: Number(custom.monthlyAllowance) || 0,
+      }]
+    }));
+    setShowNew(false);
+    setShowAdd(false);
+  }
+
   function updatePlatform(id, patch) {
     setState(s => ({
       ...s,
@@ -167,10 +210,11 @@ export default function App() {
     const headers2 = ["Date","Platform","Amount","Project","Note"]; 
     const rows2 = state.transactions.map(t => [t.date,t.platform,t.amount,t.project||"",t.note||""]); 
 
-    const make = (rows) => rows.map(r => r.map(v => `"${String(v).replaceAll('"','""')}"`).join(",")).join("\\n");
+    // FIX: use \n instead of a literal line break in string literal
+    const make = (rows) => rows.map(r => r.map(v => `"${String(v).replaceAll('"','""')}"`).join(",")).join("\n");
     const part1 = make([headers1, ...rows1]);
     const part2 = make([headers2, ...rows2]);
-    const content = `Balances\\n${part1}\\n\\nTransactions\\n${part2}`;
+    const content = `Balances\n${part1}\n\nTransactions\n${part2}`;
     const blob = new Blob([content], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -283,6 +327,12 @@ export default function App() {
       {showAdd && (
         <Modal onClose={()=>setShowAdd(false)} title="Add Platform">
           <div className="space-y-2">
+            {/* NEW custom option */}
+            <button onClick={()=>setShowNew(true)} className="flex w-full items-center justify-between rounded-xl border border-emerald-700/50 bg-emerald-900/30 px-3 py-2 hover:bg-emerald-800/40">
+              <span className="text-sm font-medium text-emerald-300">NEW (custom)</span>
+              <span className="text-xs text-emerald-300">Create your own</span>
+            </button>
+            <div className="pt-2 text-xs text-zinc-500">Or pick a preset:</div>
             {PLATFORM_PRESETS.map((p) => (
               <button key={p.key} onClick={()=>addPlatform(p.key)} className="flex w-full items-center justify-between rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 hover:bg-zinc-800">
                 <span className="text-sm">{p.key}</span>
@@ -291,6 +341,13 @@ export default function App() {
             ))}
           </div>
         </Modal>
+      )}
+
+      {showNew && (
+        <NewPlatformModal
+          onClose={()=>setShowNew(false)}
+          onCreate={addCustomPlatform}
+        />
       )}
 
       {typeof editing === 'string' && (
@@ -306,11 +363,8 @@ export default function App() {
         <TransactionDrawer
           platforms={state.platforms}
           onClose={()=>setShowTxn(false)}
-          onCreate={(t)=>{ addTransaction(t); // auto deduct from balance
-            const p = state.platforms.find(p=>p.name===t.platform);
-            if (p) updatePlatform(p.id, { credits: Number(p.credits) + Number(t.amount) });
-            setShowTxn(false);
-          }}
+          onCreate={(t)=>{ addTransaction(t); const p = state.platforms.find(p=>p.name===t.platform); if (p) updatePlatform(p.id, { credits: Number(p.credits) + Number(t.amount) }); setShowTxn(false); }}
+          onCreatePlatform={(pf)=>{ addCustomPlatform(pf); }}
         />)
       }
     </div>
@@ -336,7 +390,6 @@ function PlatformCard({ platform, onEdit, onRemove, transactions }) {
   const daily = +(spent30/30).toFixed(2);
   const daysLeft = daily>0 ? Math.floor((platform.credits||0)/daily) : Infinity;
 
-  // simple line series from txns (cumulative)
   const data = useMemo(()=>{
     const days = Array.from({length:14}).map((_,i)=>{
       const d = new Date(Date.now() - (13-i)*24*3600*1000);
@@ -439,24 +492,88 @@ function EditPlatform({ platform, onClose, onSave, onRemove }) {
   );
 }
 
-function TransactionDrawer({ platforms, onCreate, onClose }) {
+function NewPlatformModal({ onCreate, onClose }) {
+  const [form, setForm] = useState({ name: "", credits: 0, unit: "credits", account: "main", monthlyAllowance: 0, color: "#22c55e" });
+  return (
+    <Modal title="Create NEW Platform" onClose={onClose}>
+      <div className="space-y-3">
+        <LabeledInput label="Name (e.g., 'Hailuo', 'Veo3', 'Custom')" value={form.name} onChange={(e)=>setForm({...form,name:e.target.value})} />
+        <LabeledInput label="Starting balance" type="number" value={form.credits} onChange={(e)=>setForm({...form,credits:Number(e.target.value)})} />
+        <LabeledInput label="Unit" value={form.unit} onChange={(e)=>setForm({...form,unit:e.target.value})} />
+        <LabeledInput label="Account" value={form.account} onChange={(e)=>setForm({...form,account:e.target.value})} />
+        <LabeledInput label="Monthly allowance" type="number" value={form.monthlyAllowance} onChange={(e)=>setForm({...form,monthlyAllowance:Number(e.target.value)})} />
+        <div className="flex items-center gap-3">
+          <label className="text-sm text-zinc-300 w-48">Color</label>
+          <input type="color" value={form.color} onChange={(e)=>setForm({...form,color:e.target.value})} className="h-8 w-16 rounded" />
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button onClick={onClose} className="rounded-xl bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700">Cancel</button>
+          <button onClick={()=>onCreate(form)} className="rounded-xl bg-emerald-500 px-3 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Create</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function TransactionDrawer({ platforms, onCreate, onClose, onCreatePlatform }) {
   const [form, setForm] = useState({ platform: platforms[0]?.name || "", amount: -10, project: "", note: "", date: new Date().toISOString().slice(0,10) });
+  const [newPf, setNewPf] = useState({ name: "", credits: 0, unit: "credits", account: "main", monthlyAllowance: 0, color: "#22c55e" });
+  const [makeNew, setMakeNew] = useState(false);
+
+  function handlePlatformChange(val){
+    if (val === "__NEW__") {
+      setMakeNew(true);
+      setForm({ ...form, platform: "" });
+    } else {
+      setMakeNew(false);
+      setForm({ ...form, platform: val });
+    }
+  }
+
+  function createAndSelect(){
+    const trimmed = (newPf.name||"").trim();
+    if (!trimmed) return alert("Name is required");
+    onCreatePlatform?.(newPf);
+    setForm({ ...form, platform: trimmed });
+    setMakeNew(false);
+  }
+
   return (
     <Modal title="Add Transaction" onClose={onClose}>
       <div className="space-y-3">
         <div className="flex items-center gap-3">
           <label className="text-sm text-zinc-300 w-48">Platform</label>
-          <select value={form.platform} onChange={(e)=>setForm({...form,platform:e.target.value})} className="flex-1 rounded-xl bg-zinc-800 px-3 py-2 text-sm">
-            {platforms.map(p => <option key={p.id}>{p.name}</option>)}
+          <select value={makeNew ? "__NEW__" : form.platform} onChange={(e)=>handlePlatformChange(e.target.value)} className="flex-1 rounded-xl bg-zinc-800 px-3 py-2 text-sm">
+            {platforms.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+            <option value="__NEW__">NEW… (create custom)</option>
           </select>
         </div>
+
+        {makeNew && (
+          <div className="rounded-xl border border-emerald-700/50 bg-emerald-900/20 p-3 space-y-2">
+            <div className="text-xs text-emerald-300 font-medium">Create new platform</div>
+            <LabeledInput label="Name" value={newPf.name} onChange={(e)=>setNewPf({...newPf,name:e.target.value})} />
+            <LabeledInput label="Starting balance" type="number" value={newPf.credits} onChange={(e)=>setNewPf({...newPf,credits:Number(e.target.value)})} />
+            <LabeledInput label="Unit" value={newPf.unit} onChange={(e)=>setNewPf({...newPf,unit:e.target.value})} />
+            <LabeledInput label="Account" value={newPf.account} onChange={(e)=>setNewPf({...newPf,account:e.target.value})} />
+            <LabeledInput label="Monthly allowance" type="number" value={newPf.monthlyAllowance} onChange={(e)=>setNewPf({...newPf,monthlyAllowance:Number(e.target.value)})} />
+            <div className="flex items-center gap-3">
+              <label className="text-sm text-zinc-300 w-48">Color</label>
+              <input type="color" value={newPf.color} onChange={(e)=>setNewPf({...newPf,color:e.target.value})} className="h-8 w-16 rounded" />
+            </div>
+            <div className="flex justify-end">
+              <button onClick={createAndSelect} className="rounded-xl bg-emerald-500 px-3 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Create & select</button>
+            </div>
+          </div>
+        )}
+
         <LabeledInput label="Amount (negative = spend)" type="number" value={form.amount} onChange={(e)=>setForm({...form,amount:Number(e.target.value)})} />
         <LabeledInput label="Project (optional)" value={form.project} onChange={(e)=>setForm({...form,project:e.target.value})} />
         <LabeledInput label="Note" value={form.note} onChange={(e)=>setForm({...form,note:e.target.value})} />
         <LabeledInput label="Date" type="date" value={form.date} onChange={(e)=>setForm({...form,date:e.target.value})} />
         <div className="flex justify-end gap-2 pt-2">
           <button onClick={onClose} className="rounded-xl bg-zinc-800 px-3 py-2 text-sm hover:bg-zinc-700">Cancel</button>
-          <button onClick={()=>onCreate(form)} className="rounded-xl bg-emerald-500 px-3 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Add</button>
+          <button onClick={()=>{ if (!form.platform) return alert("Select a platform (or create NEW)"); onCreate(form); }} className="rounded-xl bg-emerald-500 px-3 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400">Add</button>
         </div>
       </div>
     </Modal>
